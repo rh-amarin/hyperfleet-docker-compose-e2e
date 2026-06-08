@@ -1,0 +1,45 @@
+sentinel:
+  name: hyperfleet-sentinel-clusters
+
+debug_config: false
+tracing_enabled: false
+
+log:
+  level: info
+  format: text
+  output: stdout
+
+clients:
+  hyperfleet_api:
+    base_url: http://hyperfleet-api:8000
+    version: v1
+    timeout: 10s
+  broker:
+    topic: hyperfleet-e2e-compose-clusters
+
+resource_type: clusters
+poll_interval: 2s
+
+message_decision:
+  params:
+    - name: ref_time
+      expr: 'condition("Reconciled").last_updated_time'
+    - name: is_reconciled
+      expr: 'condition("Reconciled").status == "True"'
+    - name: has_ref_time
+      expr: 'ref_time != ""'
+    - name: is_new_resource
+      expr: '!is_reconciled && resource.generation == 1'
+    - name: generation_mismatch
+      expr: 'resource.generation > condition("Reconciled").observed_generation'
+    - name: reconciled_and_stale
+      expr: 'is_reconciled && has_ref_time && now - timestamp(ref_time) > duration("2m")'
+    - name: not_reconciled_and_debounced
+      expr: '!is_reconciled && has_ref_time && now - timestamp(ref_time) > duration("5s")'
+  result: "is_new_resource || generation_mismatch || reconciled_and_stale || not_reconciled_and_debounced"
+
+message_data:
+  id: "resource.id"
+  kind: "resource.kind"
+  href: "resource.href"
+  generation: "resource.generation"

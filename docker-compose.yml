@@ -1,0 +1,309 @@
+name: hyperfleet-e2e
+
+x-adapter-common: &adapter-common
+  image: ${ADAPTER_IMAGE}
+  restart: unless-stopped
+  depends_on:
+    hyperfleet-api:
+      condition: service_started
+    rabbitmq:
+      condition: service_healthy
+    k3s-bootstrap:
+      condition: service_completed_successfully
+    maestro-server:
+      condition: service_healthy
+  environment:
+    HYPERFLEET_TRACING_ENABLED: "false"
+    BROKER_CONFIG_FILE: /etc/broker/broker.yaml
+    KUBECONFIG: /kube/config
+    NAMESPACE: ${NAMESPACE}
+  volumes:
+    - ./configs/kube:/kube:ro
+
+services:
+  k3s:
+    image: ${K3S_IMAGE:-rancher/k3s:v1.31.5-k3s1}
+    restart: unless-stopped
+    privileged: true
+    cgroup: host
+    command:
+      - server
+      - --disable=traefik
+      - --disable=servicelb
+      - --tls-san=k3s
+      - --write-kubeconfig-mode=644
+    environment:
+      K3S_KUBECONFIG_OUTPUT: /output/kubeconfig.yaml
+      K3S_KUBECONFIG_MODE: "644"
+    volumes:
+      - k3s-data:/var/lib/rancher/k3s
+      - ./configs/kube:/output
+    ports:
+      - "${K3S_API_HOST_PORT:-16443}:6443"
+    healthcheck:
+      test: ["CMD", "kubectl", "get", "nodes"]
+      interval: 5s
+      timeout: 10s
+      retries: 30
+      start_period: 60s
+
+  k3s-bootstrap:
+    image: ${K3S_BOOTSTRAP_IMAGE:-alpine/k8s:1.31.4}
+    depends_on:
+      k3s:
+        condition: service_healthy
+    volumes:
+      - ./configs/kube:/kube
+      - ../hyperfleet-infra:/infra:ro
+      - ./configs/k3s:/manifests:ro
+      - ./scripts/k3s-bootstrap.sh:/bootstrap.sh:ro
+    environment:
+      KUBE_DIR: /kube
+      INFRA_DIR: /infra
+      MAESTRO_NS: ${MAESTRO_NS:-maestro}
+      MAESTRO_CONSUMER: ${MAESTRO_CONSUMER:-cluster1}
+      K3S_HOST: k3s
+      K3S_API_HOST_PORT: ${K3S_API_HOST_PORT:-16443}
+      ADAPTER_SA_NAMESPACE: hyperfleet
+      ADAPTER_SA_NAME: hyperfleet-e2e-adapter
+      KUBE_TOKEN_DURATION: ${KUBE_TOKEN_DURATION:-8760h}
+    entrypoint: ["/bin/sh", "/bootstrap.sh"]
+
+  k3s-maestro-proxy:
+    image: ${K3S_BOOTSTRAP_IMAGE:-alpine/k8s:1.31.4}
+    restart: unless-stopped
+    depends_on:
+      k3s-bootstrap:
+        condition: service_completed_successfully
+    volumes:
+      - ./configs/kube:/kube:ro
+      - ./scripts/k3s-maestro-proxy.sh:/proxy.sh:ro
+    environment:
+      KUBECONFIG: /kube/admin.yaml
+      MAESTRO_NS: ${MAESTRO_NS:-maestro}
+      MQTT_PORT: "1883"
+    entrypoint: ["/bin/sh", "/proxy.sh"]
+
+  # Maestro PostgreSQL — runs outside k3s for fast bootstrap (no pod scheduling delay).
+  maestro-postgres:
+    image: ${MAESTRO_POSTGRES_IMAGE:-quay.io/maestro/postgres:17.2}
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: maestro
+      POSTGRES_USER: maestro
+      POSTGRES_PASSWORD: maestro-password
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U maestro -d maestro"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  # Runs Maestro database migration before the server starts.
+  maestro-migrate:
+    image: ${MAESTRO_IMAGE:-quay.io/redhat-user-workloads/maestro-rhtap-tenant/maestro/maestro:latest}
+    depends_on:
+      maestro-postgres:
+        condition: service_healthy
+    volumes:
+      - ./scripts/maestro-migrate.sh:/migrate.sh:ro
+    environment:
+      DB_HOST: maestro-postgres
+      DB_PORT: "5432"
+      DB_USER: maestro
+      DB_PASSWORD: maestro-password
+      DB_NAME: maestro
+    entrypoint: ["/bin/sh", "/migrate.sh"]
+
+  # Maestro server — runs outside k3s; connects to compose postgres and to the in-cluster
+  # MQTT broker via k3s-maestro-proxy port-forward.
+  maestro-server:
+    image: ${MAESTRO_IMAGE:-quay.io/redhat-user-workloads/maestro-rhtap-tenant/maestro/maestro:latest}
+    restart: unless-stopped
+    depends_on:
+      maestro-migrate:
+        condition: service_completed_successfully
+      k3s-maestro-proxy:
+        condition: service_started
+    volumes:
+      - ./scripts/maestro-server.sh:/server.sh:ro
+    environment:
+      DB_HOST: maestro-postgres
+      DB_PORT: "5432"
+      DB_USER: maestro
+      DB_PASSWORD: maestro-password
+      DB_NAME: maestro
+      MQTT_HOST: k3s-maestro-proxy
+      MQTT_PORT: "1883"
+    ports:
+      - "${MAESTRO_HTTP_PORT:-8100}:8100"
+      - "${MAESTRO_GRPC_PORT:-8090}:8090"
+    entrypoint: ["/bin/sh", "/server.sh"]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8100/api/maestro/v1/consumers >/dev/null 2>&1"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+
+  postgres:
+    image: postgres:14.2
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD}
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    healthcheck:
+      test: ["CMD-SHELL", "rabbitmq-diagnostics -q ping"]
+      interval: 10s
+      timeout: 10s
+      retries: 12
+      start_period: 20s
+
+  api-migrate:
+    image: ${API_IMAGE}
+    command: ["migrate"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      HYPERFLEET_ENV: development
+      HYPERFLEET_CONFIG: /etc/hyperfleet/config.yaml
+      HYPERFLEET_DATABASE_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - ./configs/api/config.yaml:/etc/hyperfleet/config.yaml:ro
+
+  hyperfleet-api:
+    image: ${API_IMAGE}
+    restart: unless-stopped
+    command: ["serve", "--config=/etc/hyperfleet/config.yaml"]
+    depends_on:
+      api-migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+    ports:
+      - "${API_HOST_PORT:-18000}:8000"
+      - "${API_HEALTH_HOST_PORT:-18080}:8080"
+      - "${API_METRICS_HOST_PORT:-19090}:9090"
+    environment:
+      HYPERFLEET_ENV: development
+      HYPERFLEET_CONFIG: /etc/hyperfleet/config.yaml
+      HYPERFLEET_DATABASE_PASSWORD: ${POSTGRES_PASSWORD}
+      HYPERFLEET_ADAPTERS_REQUIRED_CLUSTER: '["cl-namespace","cl-job","cl-deployment","cl-maestro"]'
+      HYPERFLEET_ADAPTERS_REQUIRED_NODEPOOL: '["np-configmap"]'
+      HYPERFLEET_TRACING_ENABLED: "false"
+    volumes:
+      - ./configs/api/config.yaml:/etc/hyperfleet/config.yaml:ro
+
+  sentinel-clusters:
+    image: ${SENTINEL_IMAGE}
+    restart: unless-stopped
+    command: ["serve", "--config=/etc/hyperfleet/config.yaml"]
+    depends_on:
+      hyperfleet-api:
+        condition: service_started
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      BROKER_CONFIG_FILE: /etc/broker/broker.yaml
+      BROKER_RABBITMQ_URL: amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@rabbitmq:5672/
+      HYPERFLEET_BROKER_TOPIC: ${NAMESPACE}-clusters
+      HYPERFLEET_TRACING_ENABLED: "false"
+    volumes:
+      - ./configs/sentinel/clusters-config.yaml:/etc/hyperfleet/config.yaml:ro
+      - ./configs/broker/sentinel-broker.yaml:/etc/broker/broker.yaml:ro
+    ports:
+      - "8081:8080"
+
+  sentinel-nodepools:
+    image: ${SENTINEL_IMAGE}
+    restart: unless-stopped
+    command: ["serve", "--config=/etc/hyperfleet/config.yaml"]
+    depends_on:
+      hyperfleet-api:
+        condition: service_started
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      BROKER_CONFIG_FILE: /etc/broker/broker.yaml
+      BROKER_RABBITMQ_URL: amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@rabbitmq:5672/
+      HYPERFLEET_BROKER_TOPIC: ${NAMESPACE}-nodepools
+      HYPERFLEET_TRACING_ENABLED: "false"
+    volumes:
+      - ./configs/sentinel/nodepools-config.yaml:/etc/hyperfleet/config.yaml:ro
+      - ./configs/broker/sentinel-broker.yaml:/etc/broker/broker.yaml:ro
+    ports:
+      - "8082:8080"
+
+  adapter-cl-namespace:
+    <<: *adapter-common
+    command:
+      - serve
+      - --config=/etc/adapter/adapter-config.yaml
+      - --task-config=/etc/adapter/adapter-task-config.yaml
+    volumes:
+      - ./configs/kube:/kube:ro
+      - ./configs/adapters/cl-namespace:/etc/adapter:ro
+      - ./configs/adapters/cl-namespace/broker.yaml:/etc/broker/broker.yaml:ro
+
+  adapter-cl-job:
+    <<: *adapter-common
+    command:
+      - serve
+      - --config=/etc/adapter/adapter-config.yaml
+      - --task-config=/etc/adapter/adapter-task-config.yaml
+    volumes:
+      - ./configs/kube:/kube:ro
+      - ./configs/adapters/cl-job:/etc/adapter:ro
+      - ./configs/adapters/cl-job/broker.yaml:/etc/broker/broker.yaml:ro
+
+  adapter-cl-deployment:
+    <<: *adapter-common
+    command:
+      - serve
+      - --config=/etc/adapter/adapter-config.yaml
+      - --task-config=/etc/adapter/adapter-task-config.yaml
+    volumes:
+      - ./configs/kube:/kube:ro
+      - ./configs/adapters/cl-deployment:/etc/adapter:ro
+      - ./configs/adapters/cl-deployment/broker.yaml:/etc/broker/broker.yaml:ro
+
+  adapter-cl-maestro:
+    <<: *adapter-common
+    command:
+      - serve
+      - --config=/etc/adapter/adapter-config.yaml
+      - --task-config=/etc/adapter/adapter-task-config.yaml
+    volumes:
+      - ./configs/kube:/kube:ro
+      - ./configs/adapters/cl-maestro:/etc/adapter:ro
+      - ./configs/adapters/cl-maestro/broker.yaml:/etc/broker/broker.yaml:ro
+
+  adapter-np-configmap:
+    <<: *adapter-common
+    command:
+      - serve
+      - --config=/etc/adapter/adapter-config.yaml
+      - --task-config=/etc/adapter/adapter-task-config.yaml
+    volumes:
+      - ./configs/kube:/kube:ro
+      - ./configs/adapters/np-configmap:/etc/adapter:ro
+      - ./configs/adapters/np-configmap/broker.yaml:/etc/broker/broker.yaml:ro
+
+volumes:
+  k3s-data:

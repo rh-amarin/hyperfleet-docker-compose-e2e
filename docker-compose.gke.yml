@@ -1,0 +1,164 @@
+# GKE transport overlay — use with TRANSPORT_TARGET=gke (no embedded k3s/Maestro)
+name: hyperfleet-e2e
+
+x-adapter-common: &adapter-common
+  image: ${ADAPTER_IMAGE}
+  restart: unless-stopped
+  depends_on:
+    hyperfleet-api:
+      condition: service_started
+    rabbitmq:
+      condition: service_healthy
+  environment:
+    HYPERFLEET_TRACING_ENABLED: "false"
+    BROKER_CONFIG_FILE: /etc/broker/broker.yaml
+    KUBECONFIG: /kube/config
+    NAMESPACE: ${NAMESPACE}
+  volumes:
+    - ${KUBECONFIG_HOST}:/kube/config:ro
+
+services:
+  postgres:
+    image: postgres:14.2
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD}
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    healthcheck:
+      test: ["CMD-SHELL", "rabbitmq-diagnostics -q ping"]
+      interval: 10s
+      timeout: 10s
+      retries: 12
+      start_period: 20s
+
+  api-migrate:
+    image: ${API_IMAGE}
+    command: ["migrate"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      HYPERFLEET_ENV: development
+      HYPERFLEET_CONFIG: /etc/hyperfleet/config.yaml
+      HYPERFLEET_DATABASE_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - ./configs/api/config.yaml:/etc/hyperfleet/config.yaml:ro
+
+  hyperfleet-api:
+    image: ${API_IMAGE}
+    restart: unless-stopped
+    command: ["serve", "--config=/etc/hyperfleet/config.yaml"]
+    depends_on:
+      api-migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+    ports:
+      - "${API_HOST_PORT:-18000}:8000"
+      - "${API_HEALTH_HOST_PORT:-18080}:8080"
+      - "${API_METRICS_HOST_PORT:-19090}:9090"
+    environment:
+      HYPERFLEET_ENV: development
+      HYPERFLEET_CONFIG: /etc/hyperfleet/config.yaml
+      HYPERFLEET_DATABASE_PASSWORD: ${POSTGRES_PASSWORD}
+      HYPERFLEET_ADAPTERS_REQUIRED_CLUSTER: '["cl-namespace","cl-job","cl-deployment","cl-maestro"]'
+      HYPERFLEET_ADAPTERS_REQUIRED_NODEPOOL: '["np-configmap"]'
+      HYPERFLEET_TRACING_ENABLED: "false"
+    volumes:
+      - ./configs/api/config.yaml:/etc/hyperfleet/config.yaml:ro
+
+  sentinel-clusters:
+    image: ${SENTINEL_IMAGE}
+    restart: unless-stopped
+    command: ["serve", "--config=/etc/hyperfleet/config.yaml"]
+    depends_on:
+      hyperfleet-api:
+        condition: service_started
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      BROKER_CONFIG_FILE: /etc/broker/broker.yaml
+      BROKER_RABBITMQ_URL: amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@rabbitmq:5672/
+      HYPERFLEET_BROKER_TOPIC: ${NAMESPACE}-clusters
+      HYPERFLEET_TRACING_ENABLED: "false"
+    volumes:
+      - ./configs/sentinel/clusters-config.yaml:/etc/hyperfleet/config.yaml:ro
+      - ./configs/broker/sentinel-broker.yaml:/etc/broker/broker.yaml:ro
+    ports:
+      - "8081:8080"
+
+  sentinel-nodepools:
+    image: ${SENTINEL_IMAGE}
+    restart: unless-stopped
+    command: ["serve", "--config=/etc/hyperfleet/config.yaml"]
+    depends_on:
+      hyperfleet-api:
+        condition: service_started
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      BROKER_CONFIG_FILE: /etc/broker/broker.yaml
+      BROKER_RABBITMQ_URL: amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@rabbitmq:5672/
+      HYPERFLEET_BROKER_TOPIC: ${NAMESPACE}-nodepools
+      HYPERFLEET_TRACING_ENABLED: "false"
+    volumes:
+      - ./configs/sentinel/nodepools-config.yaml:/etc/hyperfleet/config.yaml:ro
+      - ./configs/broker/sentinel-broker.yaml:/etc/broker/broker.yaml:ro
+    ports:
+      - "8082:8080"
+
+  adapter-cl-namespace:
+    <<: *adapter-common
+    command: [serve, --config=/etc/adapter/adapter-config.yaml, --task-config=/etc/adapter/adapter-task-config.yaml]
+    volumes:
+      - ${KUBECONFIG_HOST}:/kube/config:ro
+      - ./configs/adapters/cl-namespace:/etc/adapter:ro
+      - ./configs/adapters/cl-namespace/broker.yaml:/etc/broker/broker.yaml:ro
+
+  adapter-cl-job:
+    <<: *adapter-common
+    command: [serve, --config=/etc/adapter/adapter-config.yaml, --task-config=/etc/adapter/adapter-task-config.yaml]
+    volumes:
+      - ${KUBECONFIG_HOST}:/kube/config:ro
+      - ./configs/adapters/cl-job:/etc/adapter:ro
+      - ./configs/adapters/cl-job/broker.yaml:/etc/broker/broker.yaml:ro
+
+  adapter-cl-deployment:
+    <<: *adapter-common
+    command: [serve, --config=/etc/adapter/adapter-config.yaml, --task-config=/etc/adapter/adapter-task-config.yaml]
+    volumes:
+      - ${KUBECONFIG_HOST}:/kube/config:ro
+      - ./configs/adapters/cl-deployment:/etc/adapter:ro
+      - ./configs/adapters/cl-deployment/broker.yaml:/etc/broker/broker.yaml:ro
+
+  adapter-cl-maestro:
+    <<: *adapter-common
+    command: [serve, --config=/etc/adapter/adapter-config.yaml, --task-config=/etc/adapter/adapter-task-config.yaml]
+    volumes:
+      - ${KUBECONFIG_HOST}:/kube/config:ro
+      - ./configs/adapters/cl-maestro:/etc/adapter:ro
+      - ./configs/adapters/cl-maestro/broker.yaml:/etc/broker/broker.yaml:ro
+
+  adapter-np-configmap:
+    <<: *adapter-common
+    command: [serve, --config=/etc/adapter/adapter-config.yaml, --task-config=/etc/adapter/adapter-task-config.yaml]
+    volumes:
+      - ${KUBECONFIG_HOST}:/kube/config:ro
+      - ./configs/adapters/np-configmap:/etc/adapter:ro
+      - ./configs/adapters/np-configmap/broker.yaml:/etc/broker/broker.yaml:ro

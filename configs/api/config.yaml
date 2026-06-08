@@ -1,0 +1,42 @@
+server:
+  host: "0.0.0.0"
+  port: 8000
+  jwt:
+    enabled: false
+
+database:
+  dialect: postgres
+  host: postgres
+  port: 5432
+  name: hyperfleet
+  username: hyperfleet
+  ssl:
+    mode: disable
+  pool:
+    conn_retry_attempts: 30
+    conn_retry_interval: 2s
+
+logging:
+  level: info
+  format: text
+  output: stdout
+  otel:
+    enabled: false
+
+metrics:
+  host: "0.0.0.0"
+  port: 9090
+
+health:
+  host: "0.0.0.0"
+  port: 8080
+
+adapters:
+  required:
+    cluster:
+      - cl-namespace
+      - cl-job
+      - cl-deployment
+      - cl-maestro
+    nodepool:
+      - np-configmap

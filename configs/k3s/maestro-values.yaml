@@ -1,0 +1,8 @@
+# E2E overrides: maestro-server and PostgreSQL run as Docker Compose services outside
+# the cluster for faster bootstrap. Only the MQTT broker and agent stay in k3s.
+server:
+  # Set replicas to 0 — the server runs as a compose service (maestro-server).
+  replicas: 0
+  postgresql:
+    # Postgres runs as a compose service (maestro-postgres); don't deploy it in k3s.
+    enabled: false

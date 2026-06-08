@@ -1,0 +1,117 @@
+# Isolated mode overlay — no host ports bound, kubeconfigs in per-run named volumes,
+# tests run inside the e2e-runner container.
+#
+# Parallelism: each invocation of run-e2e-isolated.sh sets a unique COMPOSE_PROJECT_NAME
+# (via COMPOSE_CMD="podman compose --project-name <id>"). Docker/Podman namespaces every
+# resource (containers, networks, named volumes) by project name, so two simultaneous
+# isolated runs never conflict.
+#
+# Requirements: podman-compose ≥1.2 or docker compose ≥2.24 (for !reset tag support)
+
+services:
+  k3s:
+    ports: !reset []
+    # kube-config replaces the ./configs/kube host bind-mount so each run's
+    # kubeconfigs are isolated in their own per-project named volume.
+    volumes: !override
+      - k3s-data:/var/lib/rancher/k3s
+      - kube-config:/output
+
+  k3s-bootstrap:
+    volumes: !override
+      - kube-config:/kube
+      - ../hyperfleet-infra:/infra:ro
+      - ./configs/k3s:/manifests:ro
+      - ./scripts/k3s-bootstrap.sh:/bootstrap.sh:ro
+
+  k3s-maestro-proxy:
+    volumes: !override
+      - kube-config:/kube:ro
+      - ./scripts/k3s-maestro-proxy.sh:/proxy.sh:ro
+
+  # Strip host ports — maestro-server is reachable from inside the compose network only.
+  maestro-server:
+    ports: !reset []
+
+  rabbitmq:
+    ports: !reset []
+
+  hyperfleet-api:
+    ports: !reset []
+
+  sentinel-clusters:
+    ports: !reset []
+
+  sentinel-nodepools:
+    ports: !reset []
+
+  adapter-cl-namespace:
+    volumes: !override
+      - kube-config:/kube:ro
+      - ./configs/adapters/cl-namespace:/etc/adapter:ro
+      - ./configs/adapters/cl-namespace/broker.yaml:/etc/broker/broker.yaml:ro
+
+  adapter-cl-job:
+    volumes: !override
+      - kube-config:/kube:ro
+      - ./configs/adapters/cl-job:/etc/adapter:ro
+      - ./configs/adapters/cl-job/broker.yaml:/etc/broker/broker.yaml:ro
+
+  adapter-cl-deployment:
+    volumes: !override
+      - kube-config:/kube:ro
+      - ./configs/adapters/cl-deployment:/etc/adapter:ro
+      - ./configs/adapters/cl-deployment/broker.yaml:/etc/broker/broker.yaml:ro
+
+  adapter-cl-maestro:
+    volumes: !override
+      - kube-config:/kube:ro
+      - ./configs/adapters/cl-maestro:/etc/adapter:ro
+      - ./configs/adapters/cl-maestro/broker.yaml:/etc/broker/broker.yaml:ro
+
+  adapter-np-configmap:
+    volumes: !override
+      - kube-config:/kube:ro
+      - ./configs/adapters/np-configmap:/etc/adapter:ro
+      - ./configs/adapters/np-configmap/broker.yaml:/etc/broker/broker.yaml:ro
+
+  # Runs the tier0 test suite from inside the Docker network.
+  # Activated via: docker compose --profile runner run --rm e2e-runner /scripts/run-tier0-internal.sh
+  e2e-runner:
+    image: ${E2E_RUNNER_IMAGE:-golang:1.25-alpine}
+    profiles: ["runner"]
+    working_dir: /e2e
+    depends_on:
+      hyperfleet-api:
+        condition: service_started
+      rabbitmq:
+        condition: service_healthy
+      k3s-bootstrap:
+        condition: service_completed_successfully
+      k3s-maestro-proxy:
+        condition: service_started
+    environment:
+      HYPERFLEET_API_URL: http://hyperfleet-api:8000
+      MAESTRO_URL: http://maestro-server:8100
+      KUBECONFIG: /kube/config
+      NAMESPACE: ${NAMESPACE:-hyperfleet-e2e-compose}
+      TESTDATA_DIR: /e2e/testdata
+      HYPERFLEET_ADAPTERS_CLUSTER: cl-namespace,cl-job,cl-deployment,cl-maestro
+      HYPERFLEET_ADAPTERS_NODEPOOL: np-configmap
+    volumes:
+      - ${E2E_REPO}:/e2e:ro
+      - e2e-bin:/e2e/bin
+      - ./output:/output
+      - kube-config:/kube:ro
+      - ./scripts:/scripts:ro
+    entrypoint: ["/bin/sh"]
+
+volumes:
+  # Per-run kubeconfig store, namespaced by COMPOSE_PROJECT_NAME automatically.
+  # Two parallel runs (different project names) get separate kube-config volumes.
+  kube-config:
+  # Shared binary cache across all runs to avoid rebuilding the Linux binary every time.
+  # Pre-created by run-e2e-isolated.sh: podman volume create hyperfleet-e2e-bin
+  e2e-bin:
+    external: true
+    name: hyperfleet-e2e-bin
