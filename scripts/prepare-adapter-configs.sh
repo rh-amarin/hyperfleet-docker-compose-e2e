@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 : "${PROJECTS:=$(dirname "$ROOT_DIR")}"
-E2E_REPO="${E2E_REPO:-${PROJECTS}/hyperfleet-e2e/ue2e/main}"
+E2E_REPO="${E2E_REPO:-${PROJECTS}/hyperfleet-e2e}"
 NAMESPACE="${NAMESPACE:-hyperfleet-e2e-compose}"
 ADAPTER_CONFIGS_DIR="${ROOT_DIR}/configs/adapters"
 SRC_DIR="${E2E_REPO}/testdata/adapter-configs"
@@ -67,7 +67,7 @@ EOF
 main() {
   if [[ ! -d "$SRC_DIR" ]]; then
     echo "ERROR: E2E adapter configs not found at ${SRC_DIR}" >&2
-    echo "Set E2E_REPO to the hyperfleet-e2e checkout (ue2e/main worktree)." >&2
+    echo "Set E2E_REPO to the hyperfleet-e2e repo path." >&2
     exit 1
   fi
 

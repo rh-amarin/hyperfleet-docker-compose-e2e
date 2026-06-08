@@ -13,7 +13,7 @@ fi
 # Override via env var; defaults to the directory containing this repo.
 : "${PROJECTS:=$(dirname "$ROOT_DIR")}"
 : "${INFRA_DIR:=${PROJECTS}/hyperfleet-infra}"
-: "${E2E_REPO:=${PROJECTS}/hyperfleet-e2e/ue2e/main}"
+: "${E2E_REPO:=${PROJECTS}/hyperfleet-e2e}"
 # Export so docker compose picks them up for volume bind mounts.
 export INFRA_DIR E2E_REPO
 : "${TRANSPORT_TARGET:=k3s}"

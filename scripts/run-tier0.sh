@@ -10,7 +10,7 @@ if [[ -f .env ]]; then
 fi
 
 : "${PROJECTS:=$(dirname "$ROOT_DIR")}"
-: "${E2E_REPO:=${PROJECTS}/hyperfleet-e2e/ue2e/main}"
+: "${E2E_REPO:=${PROJECTS}/hyperfleet-e2e}"
 : "${NAMESPACE:=hyperfleet-e2e-compose}"
 : "${MAESTRO_HTTP_PORT:=8100}"
 : "${TRANSPORT_TARGET:=k3s}"
