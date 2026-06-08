@@ -70,14 +70,32 @@ require_cmd() {
   done
 }
 
+_build_image() {
+  local tag="$1"
+  local context="$2"
+  local dockerfile="${context}/Dockerfile"
+  local -a bargs=()
+  [[ -n "${GOPROXY:-}" ]] && bargs+=(--build-arg "GOPROXY=${GOPROXY}")
+
+  # If GOPROXY is set and the Dockerfile doesn't already declare ARG GOPROXY,
+  # inject it before the first "COPY go.mod" line via a temp file so the source
+  # repo is never modified.
+  if [[ ${#bargs[@]} -gt 0 ]] && ! grep -q "^ARG GOPROXY" "$dockerfile"; then
+    local tmp
+    tmp="$(mktemp)"
+    awk '/^COPY[[:space:]].*go\.mod/{print "ARG GOPROXY"} {print}' "$dockerfile" > "$tmp"
+    ${CONTAINER_CMD} build "${bargs[@]}" -f "$tmp" -t "$tag" "$context"
+    rm -f "$tmp"
+  else
+    ${CONTAINER_CMD} build "${bargs[@]}" -t "$tag" "$context"
+  fi
+}
+
 build_images() {
   log "Building local container images..."
-  # Use host network so the build container shares the host DNS/routing.
-  # Without this, Docker's internal DNS may resolve module proxy hostnames to
-  # different IPs than the host sees, causing connection failures inside builds.
-  ${CONTAINER_CMD} build --network=host -t "${API_IMAGE:-hyperfleet-api:local}" "${PROJECTS}/hyperfleet-api"
-  ${CONTAINER_CMD} build --network=host -t "${SENTINEL_IMAGE:-hyperfleet-sentinel:local}" "${PROJECTS}/hyperfleet-sentinel"
-  ${CONTAINER_CMD} build --network=host -t "${ADAPTER_IMAGE:-hyperfleet-adapter:local}" "${PROJECTS}/hyperfleet-adapter"
+  _build_image "${API_IMAGE:-hyperfleet-api:local}"           "${PROJECTS}/hyperfleet-api"
+  _build_image "${SENTINEL_IMAGE:-hyperfleet-sentinel:local}" "${PROJECTS}/hyperfleet-sentinel"
+  _build_image "${ADAPTER_IMAGE:-hyperfleet-adapter:local}"   "${PROJECTS}/hyperfleet-adapter"
 }
 
 prepare_maestro_chart() {
