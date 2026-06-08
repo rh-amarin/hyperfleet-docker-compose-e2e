@@ -72,9 +72,20 @@ require_cmd() {
 
 build_images() {
   log "Building local container images..."
-  ${CONTAINER_CMD} build -t "${API_IMAGE:-hyperfleet-api:local}" "${PROJECTS}/hyperfleet-api"
-  ${CONTAINER_CMD} build -t "${SENTINEL_IMAGE:-hyperfleet-sentinel:local}" "${PROJECTS}/hyperfleet-sentinel"
-  ${CONTAINER_CMD} build -t "${ADAPTER_IMAGE:-hyperfleet-adapter:local}" "${PROJECTS}/hyperfleet-adapter"
+  # Forward Go module proxy and HTTP proxy settings if set in the environment.
+  # Useful in environments where proxy.golang.org is unreachable.
+  local _bargs=()
+  [[ -n "${GOPROXY:-}"      ]] && _bargs+=(--build-arg "GOPROXY=${GOPROXY}")
+  [[ -n "${GONOSUMCHECK:-}" ]] && _bargs+=(--build-arg "GONOSUMCHECK=${GONOSUMCHECK}")
+  [[ -n "${GONOSUMDB:-}"    ]] && _bargs+=(--build-arg "GONOSUMDB=${GONOSUMDB}")
+  [[ -n "${http_proxy:-}"   ]] && _bargs+=(--build-arg "http_proxy=${http_proxy}")
+  [[ -n "${https_proxy:-}"  ]] && _bargs+=(--build-arg "https_proxy=${https_proxy}")
+  [[ -n "${HTTP_PROXY:-}"   ]] && _bargs+=(--build-arg "HTTP_PROXY=${HTTP_PROXY}")
+  [[ -n "${HTTPS_PROXY:-}"  ]] && _bargs+=(--build-arg "HTTPS_PROXY=${HTTPS_PROXY}")
+  [[ -n "${NO_PROXY:-}"     ]] && _bargs+=(--build-arg "NO_PROXY=${NO_PROXY}")
+  ${CONTAINER_CMD} build "${_bargs[@]}" -t "${API_IMAGE:-hyperfleet-api:local}" "${PROJECTS}/hyperfleet-api"
+  ${CONTAINER_CMD} build "${_bargs[@]}" -t "${SENTINEL_IMAGE:-hyperfleet-sentinel:local}" "${PROJECTS}/hyperfleet-sentinel"
+  ${CONTAINER_CMD} build "${_bargs[@]}" -t "${ADAPTER_IMAGE:-hyperfleet-adapter:local}" "${PROJECTS}/hyperfleet-adapter"
 }
 
 prepare_maestro_chart() {
