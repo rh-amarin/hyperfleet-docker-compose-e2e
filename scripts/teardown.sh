@@ -4,7 +4,14 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
-COMPOSE_CMD="${COMPOSE_CMD:-podman compose}"
+# Detect container runtime (podman preferred, docker fallback).
+if command -v podman >/dev/null 2>&1; then
+  COMPOSE_CMD="${COMPOSE_CMD:-podman compose}"
+elif command -v docker >/dev/null 2>&1; then
+  COMPOSE_CMD="${COMPOSE_CMD:-docker compose}"
+else
+  echo "ERROR: neither podman nor docker found in PATH" >&2; exit 1
+fi
 
 if [[ -f .env ]]; then
   # shellcheck disable=SC1091

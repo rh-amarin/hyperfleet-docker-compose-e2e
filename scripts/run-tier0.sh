@@ -14,7 +14,14 @@ fi
 : "${MAESTRO_HTTP_PORT:=8100}"
 : "${TRANSPORT_TARGET:=k3s}"
 
-COMPOSE_CMD="${COMPOSE_CMD:-podman compose}"
+# Detect container runtime (podman preferred, docker fallback).
+if command -v podman >/dev/null 2>&1; then
+  COMPOSE_CMD="${COMPOSE_CMD:-podman compose}"
+elif command -v docker >/dev/null 2>&1; then
+  COMPOSE_CMD="${COMPOSE_CMD:-docker compose}"
+else
+  echo "ERROR: neither podman nor docker found in PATH" >&2; exit 1
+fi
 ISOLATED=false
 
 # Each entry: "name|focus-regex"

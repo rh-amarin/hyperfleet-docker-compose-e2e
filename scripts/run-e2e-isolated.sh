@@ -31,21 +31,32 @@ mkdir -p "$REPORT_DIR"
 log() { printf '\033[1;34m[e2e]\033[0m %s\n' "$*"; }
 err() { printf '\033[1;31m[e2e]\033[0m %s\n' "$*" >&2; }
 
+# ── Detect container runtime ──────────────────────────────────────────────────
+if command -v podman >/dev/null 2>&1; then
+  CONTAINER_CMD="podman"
+  _BASE_COMPOSE="podman compose"
+elif command -v docker >/dev/null 2>&1; then
+  CONTAINER_CMD="docker"
+  _BASE_COMPOSE="docker compose"
+else
+  err "ERROR: neither podman nor docker found in PATH"; exit 1
+fi
+
 # ── Generate unique run identity ──────────────────────────────────────────────
 # Each invocation gets a 6-char hex ID so parallel runs are fully isolated:
 # containers, networks, and named volumes (kube-config, k3s-data) are all
 # namespaced by COMPOSE_PROJECT_NAME automatically.
 RUN_ID="$(openssl rand -hex 3)"
 PROJECT_NAME="hyperfleet-e2e-${RUN_ID}"
-# Embed --project-name in COMPOSE_CMD so all sub-scripts pick it up via
-# COMPOSE_CMD="${COMPOSE_CMD:-podman compose}" without needing further changes.
-export COMPOSE_CMD="podman compose --project-name ${PROJECT_NAME}"
-log "Run ID: ${RUN_ID}  project: ${PROJECT_NAME}"
+# Embed --project-name in COMPOSE_CMD so all sub-scripts pick it up without
+# needing further changes.
+export COMPOSE_CMD="${_BASE_COMPOSE} --project-name ${PROJECT_NAME}"
+log "Run ID: ${RUN_ID}  project: ${PROJECT_NAME}  runtime: ${CONTAINER_CMD}"
 
 # ── Ensure shared binary cache volume exists ──────────────────────────────────
 # Declared as external in docker-compose.isolated.yml so it is NOT namespaced
 # by project name — all parallel runs share the same compiled binary.
-podman volume create hyperfleet-e2e-bin 2>/dev/null || true
+${CONTAINER_CMD} volume create hyperfleet-e2e-bin 2>/dev/null || true
 
 # ── 1. Setup ──────────────────────────────────────────────────────────────────
 log "Starting isolated stack (SKIP_BUILD=${SKIP_BUILD}, project=${PROJECT_NAME})"

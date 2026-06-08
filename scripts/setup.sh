@@ -18,7 +18,20 @@ fi
 
 log() { printf '[setup] %s\n' "$*"; }
 
-COMPOSE_CMD="${COMPOSE_CMD:-podman compose}"
+# Detect container runtime and compose command (podman preferred, docker fallback).
+detect_runtime() {
+  if command -v podman >/dev/null 2>&1; then
+    CONTAINER_CMD="podman"
+    COMPOSE_CMD="${COMPOSE_CMD:-podman compose}"
+  elif command -v docker >/dev/null 2>&1; then
+    CONTAINER_CMD="docker"
+    COMPOSE_CMD="${COMPOSE_CMD:-docker compose}"
+  else
+    echo "ERROR: neither podman nor docker found in PATH" >&2
+    exit 1
+  fi
+}
+detect_runtime
 ISOLATED=false
 
 # Parse --isolated early so compose flags are available in all functions.
@@ -54,9 +67,9 @@ require_cmd() {
 
 build_images() {
   log "Building local container images..."
-  podman build -t "${API_IMAGE:-hyperfleet-api:local}" "${ROOT_DIR}/../hyperfleet-api"
-  podman build -t "${SENTINEL_IMAGE:-hyperfleet-sentinel:local}" "${ROOT_DIR}/../hyperfleet-sentinel"
-  podman build -t "${ADAPTER_IMAGE:-hyperfleet-adapter:local}" "${ROOT_DIR}/../hyperfleet-adapter"
+  ${CONTAINER_CMD} build -t "${API_IMAGE:-hyperfleet-api:local}" "${ROOT_DIR}/../hyperfleet-api"
+  ${CONTAINER_CMD} build -t "${SENTINEL_IMAGE:-hyperfleet-sentinel:local}" "${ROOT_DIR}/../hyperfleet-sentinel"
+  ${CONTAINER_CMD} build -t "${ADAPTER_IMAGE:-hyperfleet-adapter:local}" "${ROOT_DIR}/../hyperfleet-adapter"
 }
 
 prepare_maestro_chart() {
@@ -89,11 +102,11 @@ prepare_k3s() {
   # k3s node names are container IDs; reusing the data volume leaves ghost NotReady nodes.
   if [[ "${RESET_K3S_DATA:-true}" == "true" ]]; then
     local vol="${COMPOSE_PROJECT_NAME:-hyperfleet-e2e}_k3s-data"
-    if podman volume exists "$vol" 2>/dev/null; then
+    if ${CONTAINER_CMD} volume inspect "$vol" >/dev/null 2>&1; then
       log "Removing stale k3s data volume (${vol})"
       # shellcheck disable=SC2086
       ${COMPOSE_CMD} ${COMPOSE_FLAGS} --env-file .env down 2>/dev/null || true
-      podman volume rm "$vol" || true
+      ${CONTAINER_CMD} volume rm "$vol" || true
     fi
   fi
 }
@@ -235,7 +248,7 @@ wait_for_k3s_bootstrap() {
 }
 
 main() {
-  require_cmd podman curl
+  require_cmd "${CONTAINER_CMD}" curl
 
   # COMPOSE_FLAGS must be set after TRANSPORT_TARGET (and optionally ISOLATED) are known.
   # shellcheck disable=SC2034
