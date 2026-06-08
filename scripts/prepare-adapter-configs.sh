@@ -2,7 +2,8 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-E2E_REPO="${E2E_REPO:-/Users/amarin/work/workspaces/github/hyperfleet/hyperfleet-e2e/ue2e/main}"
+: "${PROJECTS:=$(dirname "$ROOT_DIR")}"
+E2E_REPO="${E2E_REPO:-${PROJECTS}/hyperfleet-e2e/ue2e/main}"
 NAMESPACE="${NAMESPACE:-hyperfleet-e2e-compose}"
 ADAPTER_CONFIGS_DIR="${ROOT_DIR}/configs/adapters"
 SRC_DIR="${E2E_REPO}/testdata/adapter-configs"

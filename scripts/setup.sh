@@ -9,8 +9,13 @@ if [[ -f .env ]]; then
   source .env
 fi
 
-: "${E2E_REPO:=/Users/amarin/work/workspaces/github/hyperfleet/hyperfleet-e2e/ue2e/main}"
-: "${INFRA_DIR:=${ROOT_DIR}/../hyperfleet-infra}"
+# PROJECTS is the parent directory that contains all HyperFleet repos side-by-side.
+# Override via env var; defaults to the directory containing this repo.
+: "${PROJECTS:=$(dirname "$ROOT_DIR")}"
+: "${INFRA_DIR:=${PROJECTS}/hyperfleet-infra}"
+: "${E2E_REPO:=${PROJECTS}/hyperfleet-e2e/ue2e/main}"
+# Export so docker compose picks them up for volume bind mounts.
+export INFRA_DIR E2E_REPO
 : "${TRANSPORT_TARGET:=k3s}"
 : "${MAESTRO_HTTP_PORT:=8100}"
 : "${MAESTRO_GRPC_PORT:=8090}"
@@ -67,9 +72,9 @@ require_cmd() {
 
 build_images() {
   log "Building local container images..."
-  ${CONTAINER_CMD} build -t "${API_IMAGE:-hyperfleet-api:local}" "${ROOT_DIR}/../hyperfleet-api"
-  ${CONTAINER_CMD} build -t "${SENTINEL_IMAGE:-hyperfleet-sentinel:local}" "${ROOT_DIR}/../hyperfleet-sentinel"
-  ${CONTAINER_CMD} build -t "${ADAPTER_IMAGE:-hyperfleet-adapter:local}" "${ROOT_DIR}/../hyperfleet-adapter"
+  ${CONTAINER_CMD} build -t "${API_IMAGE:-hyperfleet-api:local}" "${PROJECTS}/hyperfleet-api"
+  ${CONTAINER_CMD} build -t "${SENTINEL_IMAGE:-hyperfleet-sentinel:local}" "${PROJECTS}/hyperfleet-sentinel"
+  ${CONTAINER_CMD} build -t "${ADAPTER_IMAGE:-hyperfleet-adapter:local}" "${PROJECTS}/hyperfleet-adapter"
 }
 
 prepare_maestro_chart() {

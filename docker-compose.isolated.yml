@@ -20,7 +20,7 @@ services:
   k3s-bootstrap:
     volumes: !override
       - kube-config:/kube
-      - ../hyperfleet-infra:/infra:ro
+      - ${INFRA_DIR:-../hyperfleet-infra}:/infra:ro
       - ./configs/k3s:/manifests:ro
       - ./scripts/k3s-bootstrap.sh:/bootstrap.sh:ro
 
