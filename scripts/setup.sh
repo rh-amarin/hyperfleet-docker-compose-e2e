@@ -16,6 +16,10 @@ fi
 : "${E2E_REPO:=${PROJECTS}/hyperfleet-e2e}"
 # Export so docker compose picks them up for volume bind mounts.
 export INFRA_DIR E2E_REPO
+: "${API_IMAGE:=hyperfleet-api:local}"
+: "${SENTINEL_IMAGE:=hyperfleet-sentinel:local}"
+: "${ADAPTER_IMAGE:=hyperfleet-adapter:local}"
+export API_IMAGE SENTINEL_IMAGE ADAPTER_IMAGE
 : "${TRANSPORT_TARGET:=k3s}"
 : "${MAESTRO_HTTP_PORT:=8100}"
 : "${MAESTRO_GRPC_PORT:=8090}"

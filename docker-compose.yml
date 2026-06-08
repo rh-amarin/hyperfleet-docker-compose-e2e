@@ -1,7 +1,7 @@
 name: hyperfleet-e2e
 
 x-adapter-common: &adapter-common
-  image: ${ADAPTER_IMAGE}
+  image: ${ADAPTER_IMAGE:-hyperfleet-adapter:local}
   restart: unless-stopped
   depends_on:
     hyperfleet-api:
@@ -175,7 +175,7 @@ services:
       start_period: 20s
 
   api-migrate:
-    image: ${API_IMAGE}
+    image: ${API_IMAGE:-hyperfleet-api:local}
     command: ["migrate"]
     depends_on:
       postgres:
@@ -188,7 +188,7 @@ services:
       - ./configs/api/config.yaml:/etc/hyperfleet/config.yaml:ro
 
   hyperfleet-api:
-    image: ${API_IMAGE}
+    image: ${API_IMAGE:-hyperfleet-api:local}
     restart: unless-stopped
     command: ["serve", "--config=/etc/hyperfleet/config.yaml"]
     depends_on:
@@ -211,7 +211,7 @@ services:
       - ./configs/api/config.yaml:/etc/hyperfleet/config.yaml:ro
 
   sentinel-clusters:
-    image: ${SENTINEL_IMAGE}
+    image: ${SENTINEL_IMAGE:-hyperfleet-sentinel:local}
     restart: unless-stopped
     command: ["serve", "--config=/etc/hyperfleet/config.yaml"]
     depends_on:
@@ -231,7 +231,7 @@ services:
       - "8081:8080"
 
   sentinel-nodepools:
-    image: ${SENTINEL_IMAGE}
+    image: ${SENTINEL_IMAGE:-hyperfleet-sentinel:local}
     restart: unless-stopped
     command: ["serve", "--config=/etc/hyperfleet/config.yaml"]
     depends_on:
